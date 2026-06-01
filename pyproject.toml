@@ -1,0 +1,24 @@
+[project]
+name = "aidemo"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = [
+    "alibabacloud-oss-v2>=1.3.0",
+    "chromadb>=1.5.9",
+    "dashscope>=1.25.19",
+    "fastapi>=0.136.3",
+    "langchain>=1.3.2",
+    "langchain-core>=1.4.0",
+    "langchain-deepseek>=1.0.1",
+    "langchain-tavily>=0.2.18",
+    "langgraph-checkpoint-sqlite>=3.1.0",
+    "langgraph-cli[inmem]>=0.4.27",
+    "openai>=2.38.0",
+    "pillow>=12.2.0",
+    "python-dotenv>=1.2.2",
+    "sentence-transformers>=5.5.1",
+]
+
+[[tool.uv.index]]
+url = "https://pypi.tuna.tsinghua.edu.cn/simple"
+default = true

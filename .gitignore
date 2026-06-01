@@ -1,0 +1,29 @@
+# ==================== 密钥 & 环境配置 ====================
+.env
+
+# ==================== Python ====================
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# ==================== IDE ====================
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ==================== 本地数据 ====================
+# SQLite 对话数据库（包含用户聊天记录）
+resources/pet.db
+# ChromaDB 向量存储（RAG 知识库索引）
+resources/pet_rag_db/
+# LangGraph 运行时状态
+.langgraph_api/
+
+# ==================== OS ====================
+.DS_Store
+Thumbs.db
