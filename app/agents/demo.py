@@ -4,6 +4,9 @@ from langchain_tavily import TavilySearch
 from langchain.agents import create_agent
 from langchain.tools import tool
 from langchain.messages import HumanMessage, AIMessage, AIMessageChunk
+from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_community.document_loaders import PyPDFLoader, Docx2txtLoader
 import sqlite3
 from langgraph.checkpoint.sqlite import SqliteSaver
 from app.common.logger import logger
@@ -42,14 +45,19 @@ os.makedirs(_RAG_DOCS_DIR, exist_ok=True)
 
 
 # ==================== 从文件夹加载知识库 ====================
+# ==================== 支持的文件格式 ====================
+_SUPPORTED_EXTS = {".txt", ".md", ".pdf", ".docx"}
+
+
 def _get_docs_hash() -> str:
-    """计算 rag_docs 目录下所有文件的哈希值，用于检测更新"""
+    """计算 rag_docs 目录下所有支持文件的哈希值，用于检测更新"""
     import hashlib
     hasher = hashlib.md5()
     if not os.path.isdir(_RAG_DOCS_DIR):
         return ""
     for fname in sorted(os.listdir(_RAG_DOCS_DIR)):
-        if fname.endswith((".txt", ".md")):
+        ext = os.path.splitext(fname)[1].lower()
+        if ext in _SUPPORTED_EXTS:
             fpath = os.path.join(_RAG_DOCS_DIR, fname)
             with open(fpath, "rb") as f:
                 hasher.update(fname.encode())
@@ -57,8 +65,49 @@ def _get_docs_hash() -> str:
     return hasher.hexdigest()
 
 
+def _read_text_file(fpath: str) -> str | None:
+    """读取纯文本文件，编码回退 UTF-8 → GBK"""
+    try:
+        with open(fpath, "r", encoding="utf-8") as f:
+            return f.read().strip()
+    except UnicodeDecodeError:
+        with open(fpath, "r", encoding="gbk") as f:
+            return f.read().strip()
+
+
+def _load_file_as_docs(fpath: str, fname: str) -> list[Document]:
+    """按扩展名选择合适的 loader 加载单个文件"""
+    ext = os.path.splitext(fname)[1].lower()
+    source = os.path.splitext(fname)[0]
+
+    # ── 纯文本：使用自己的编码回退方案（比 TextLoader.autodetect_encoding 更可靠） ──
+    if ext in (".txt", ".md"):
+        content = _read_text_file(fpath)
+        if content:
+            return [Document(page_content=content, metadata={"source": source})]
+        return []
+
+    # ── PDF ──
+    if ext == ".pdf":
+        loader = PyPDFLoader(fpath)
+        docs = loader.load()
+        for d in docs:
+            d.metadata["source"] = source
+        return docs
+
+    # ── Word ──
+    if ext == ".docx":
+        loader = Docx2txtLoader(fpath)
+        docs = loader.load()
+        for d in docs:
+            d.metadata["source"] = source
+        return docs
+
+    return []
+
+
 def _load_knowledge_base():
-    """从 rag_docs 文件夹读取 .txt/.md 文件，同步到 ChromaDB"""
+    """加载 rag_docs 目录下的文档（支持 txt/md/pdf/docx），分块后同步到 ChromaDB"""
     current_hash = _get_docs_hash()
 
     # 检查是否需要更新
@@ -69,7 +118,7 @@ def _load_knowledge_base():
         stored_hash = ""
 
     if existing_count > 0 and current_hash == stored_hash:
-        logger.info(f"知识库未变化，跳过加载（{existing_count} 篇文档）")
+        logger.info(f"知识库未变化，跳过加载（{existing_count} 个 chunk）")
         return
 
     # 有变化：清空重建
@@ -77,39 +126,49 @@ def _load_knowledge_base():
         logger.info("检测到知识库文件变化，重新索引...")
         rag_manager.delete_collection()
 
-    # 扫描文件夹
-    documents = []
-    metadatas = []
     if not os.path.isdir(_RAG_DOCS_DIR):
         logger.warning(f"知识库目录不存在: {_RAG_DOCS_DIR}")
         return
 
+    # === Step 1: 按扩展名分发 loader，统一生成 Document 对象 ===
+    raw_docs: list[Document] = []
+    stats: dict[str, int] = {}  # 统计各格式数量
+
     for fname in sorted(os.listdir(_RAG_DOCS_DIR)):
-        if not fname.endswith((".txt", ".md")):
+        ext = os.path.splitext(fname)[1].lower()
+        if ext not in _SUPPORTED_EXTS:
             continue
         fpath = os.path.join(_RAG_DOCS_DIR, fname)
         try:
-            with open(fpath, "r", encoding="utf-8") as f:
-                content_text = f.read().strip()
-        except UnicodeDecodeError:
-            with open(fpath, "r", encoding="gbk") as f:
-                content_text = f.read().strip()
+            docs = _load_file_as_docs(fpath, fname)
+            if docs:
+                raw_docs.extend(docs)
+                stats[ext] = stats.get(ext, 0) + 1
+        except Exception as e:
+            logger.warning(f"加载文件失败 {fname}: {e}")
 
-        if not content_text:
-            continue
-
-        # 文件名去掉扩展名作为来源标签
-        source = os.path.splitext(fname)[0]
-        documents.append(content_text)
-        metadatas.append({"source": source})
-
-    if documents:
-        rag_manager.add_documents(documents, metadatas)
-        # 存储文件哈希用于增量更新检测
-        rag_manager.collection.modify(metadata={"docs_hash": current_hash})
-        logger.info(f"知识库加载完成: {len(documents)} 篇文档 (来自 {_RAG_DOCS_DIR})")
-    else:
+    if not raw_docs:
         logger.warning(f"知识库目录为空，未加载任何文档 ({_RAG_DOCS_DIR})")
+        return
+
+    logger.info(f"文档加载完成: {' | '.join(f'{v} {k}' for k, v in sorted(stats.items()))}")
+
+    # === Step 2: LangChain RecursiveCharacterTextSplitter 语义分块 ===
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=500,
+        chunk_overlap=100,
+        separators=["\n\n", "\n", "。", ".", "！", "？", " ", ""],
+    )
+    chunks = splitter.split_documents(raw_docs)
+    logger.info(f"文档分块完成: {len(raw_docs)} 篇 → {len(chunks)} 个 chunk")
+
+    # === Step 3: 写入 ChromaDB ===
+    rag_manager.add_documents(
+        documents=[chunk.page_content for chunk in chunks],
+        metadatas=[chunk.metadata for chunk in chunks],
+    )
+    rag_manager.collection.modify(metadata={"docs_hash": current_hash})
+    logger.info(f"知识库加载完成: {len(chunks)} 个 chunk (来自 {_RAG_DOCS_DIR})")
 
 
 # 启动时加载知识库

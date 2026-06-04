@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import langchain; print\\('langchain:', langchain.__version__\\)\")",
+      "Bash(python -c \"import langchain_community; print\\('langchain_community:', langchain_community.__version__\\)\")",
+      "Bash(python -c \"from langchain_core.documents import Document; print\\('Document class available'\\)\")",
+      "Bash(python -c \"from langchain.document_loaders import DirectoryLoader, TextLoader; print\\('DirectoryLoader, TextLoader available'\\)\")",
+      "Bash(python -c \"import langchain; print\\(dir\\(langchain\\)\\)\")",
+      "Bash(python -c \"import langchain_core; print\\(dir\\(langchain_core\\)\\)\")",
+      "Bash(uv add *)",
+      "Bash(python -c \"from langchain_community.document_loaders import DirectoryLoader, TextLoader; print\\('TextLoader OK'\\); from langchain_text_splitters import RecursiveCharacterTextSplitter; print\\('Splitter OK'\\)\")",
+      "Bash(python -c \"from langchain_classic.document_loaders import DirectoryLoader, TextLoader; print\\('langchain_classic OK'\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python test_rag.py)",
+      "Bash(uv remove *)",
+      "Bash(python -c \"from dashscope import TextReRank; print\\('TextReRank OK'\\); resp = TextReRank.call\\(model='gte-rerank', query='测试', documents=['文档1', '文档2'], top_n=1\\); print\\(f'status={resp.status_code}'\\); print\\(f'message={resp.message}'\\)\")"
+    ]
+  }
+}
