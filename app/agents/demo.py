@@ -181,6 +181,49 @@ web_search = TavilySearch(
 )
 
 
+# ==================== 多 Query 扩展 ====================
+_QUERY_EXPAND_PROMPT = """你是一个搜索查询优化器。将以下用户问题改写为 {n} 个不同角度的搜索查询。
+
+要求：
+- 每个查询从不同维度或使用不同措辞表达同一问题
+- 用关键词组合，简洁直接，不要完整句子
+- 保持原始问题的核心意图
+- 每行一个查询，不要编号、不要引号
+
+原始问题: {query}
+
+改写查询:"""
+
+
+def _expand_query(query: str, n: int = 3) -> list[str]:
+    """使用 LLM 将用户查询扩展为多个搜索变体，提高召回率"""
+    import re
+
+    prompt = _QUERY_EXPAND_PROMPT.format(query=query, n=n)
+    try:
+        response = model.invoke(prompt)
+        lines = [
+            re.sub(r'^[\d]+[\.\、\)\s]+', '', line).strip()
+            for line in response.content.strip().split("\n")
+            if line.strip()
+        ]
+    except Exception as e:
+        logger.warning(f"查询扩展失败: {e}，使用原始查询")
+        return [query]
+
+    # 去重并保留原始查询 + 扩展查询
+    seen = {query}
+    variants = [query]
+    for line in lines:
+        if line not in seen and len(variants) < n:
+            seen.add(line)
+            variants.append(line)
+
+    if len(variants) > 1:
+        logger.info(f"查询扩展: {len(variants)} 个变体 → {variants}")
+    return variants
+
+
 # ==================== RAG + 网络搜索 联合工具 ====================
 @tool
 def pet_knowledge_search(query: str) -> str:
@@ -191,33 +234,63 @@ def pet_knowledge_search(query: str) -> str:
     """
     logger.info(f"[知识搜索]: {query}")
 
-    # Step 1: 先查 RAG 知识库
-    try:
-        rag_results = rag_manager.search(query, n_results=3)
-        if rag_results:
-            docs_text = []
-            for i, doc in enumerate(rag_results):
-                source = doc.get("metadata", {}).get("source", "未知来源")
-                docs_text.append(
-                    f"{i + 1}. [{source}] (相关度: {doc['score']})\n{doc['content']}"
-                )
-            logger.info(f"RAG命中 {len(rag_results)} 条，最高相关度: {rag_results[0]['score']}")
-            return (
-                "【本地宠物知识库检索结果】\n\n"
-                + "\n\n---\n\n".join(docs_text)
-                + "\n\n（以上信息来自本地宠物养护知识库）"
-            )
-    except Exception as e:
-        logger.warning(f"RAG搜索异常: {e}")
+    # Step 0: 扩展查询（生成多个搜索变体）
+    queries = _expand_query(query, n=3)
 
-    # Step 2: RAG 无结果，回退到 Tavily 网络搜索
-    logger.info("RAG未命中，回退到网络搜索")
-    try:
-        web_result = web_search.invoke({"query": f"宠物养护 {query}"})
-        return "【网络搜索结果】\n\n" + str(web_result)
-    except Exception as e:
-        logger.error(f"网络搜索失败: {e}")
-        return "未找到相关信息，请基于自身知识回答用户问题。"
+    # Step 1: 多查询并行搜索 RAG（粗排模式，不做精排）
+    all_candidates: list[dict] = []
+    seen_fingerprint: set[str] = set()
+
+    for q in queries:
+        try:
+            results = rag_manager.search(q, n_results=3, use_rerank=False)
+            for doc in results:
+                # 用内容前 80 字符做指纹去重
+                fp = doc["content"][:80]
+                if fp not in seen_fingerprint:
+                    seen_fingerprint.add(fp)
+                    all_candidates.append(doc)
+        except Exception as e:
+            logger.warning(f"子查询 '{q[:30]}...' 搜索异常: {e}")
+
+    if not all_candidates:
+        # Step 2: RAG 无结果，回退到网络搜索
+        logger.info("多查询搜索无结果，回退到网络搜索")
+        try:
+            web_result = web_search.invoke({"query": f"宠物养护 {query}"})
+            return "【网络搜索结果】\n\n" + str(web_result)
+        except Exception as e:
+            logger.error(f"网络搜索失败: {e}")
+            return "未找到相关信息，请基于自身知识回答用户问题。"
+
+    # 按粗排分排序后取 Top-9 给精排
+    all_candidates.sort(key=lambda x: x["score"], reverse=True)
+    rerank_input = all_candidates[:9]
+
+    logger.info(
+        f"多查询合并: {len(queries)} 子查询 → 去重后 {len(all_candidates)} 条 → "
+        f"送精排 {len(rerank_input)} 条"
+    )
+
+    # Step 3: 统一精排
+    rag_results = rag_manager.rerank_documents(
+        query=query,
+        candidates=rerank_input,
+        top_n=3,
+    )
+
+    docs_text = []
+    for i, doc in enumerate(rag_results):
+        source = doc.get("metadata", {}).get("source", "未知来源")
+        docs_text.append(
+            f"{i + 1}. [{source}] (相关度: {doc['score']})\n{doc['content']}"
+        )
+    logger.info(f"RAG命中 {len(rag_results)} 条，最高相关度: {rag_results[0]['score']}")
+    return (
+        "【本地宠物知识库检索结果】\n\n"
+        + "\n\n---\n\n".join(docs_text)
+        + "\n\n（以上信息来自本地宠物养护知识库）"
+    )
 
 
 # ==================== Agent ====================

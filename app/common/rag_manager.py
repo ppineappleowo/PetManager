@@ -282,6 +282,50 @@ class RAGManager:
         logger.info(f"[最终输出] {len(final_docs)} 条 (min_similarity={min_similarity})")
         return final_docs
 
+    def rerank_documents(
+        self,
+        query: str,
+        candidates: List[dict],
+        top_n: int = 3,
+    ) -> List[dict]:
+        """
+        对外暴露的精排接口：对候选文档列表进行 Reranker 重排序
+
+        Args:
+            query: 查询文本
+            candidates: 候选文档列表 [{"content": ..., "score": ..., "metadata": ...}, ...]
+            top_n: 返回的最大文档数
+
+        Returns:
+            重排后的文档列表
+        """
+        if len(candidates) <= top_n:
+            return candidates
+
+        try:
+            reranked = _rerank(
+                query=query,
+                documents=[c["content"] for c in candidates],
+                top_n=top_n,
+            )
+        except Exception as e:
+            logger.warning(f"[精排失败] {e} → 保持原顺序")
+            return candidates[:top_n]
+
+        final_docs = []
+        for r in reranked:
+            idx = r["index"]
+            if idx >= len(candidates):
+                continue
+            c = candidates[idx]
+            new_score = round(r.get("relevance_score", c["score"]), 3)
+            final_docs.append({
+                "content": c["content"],
+                "score": new_score,
+                "metadata": c["metadata"],
+            })
+        return final_docs
+
     def delete_collection(self):
         """清空知识库"""
         try:
