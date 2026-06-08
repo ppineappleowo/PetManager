@@ -1,54 +1,76 @@
-import alibabacloud_oss_v2 as oss
-from fastapi import APIRouter
-from datetime import timedelta
-import os
-# 加载环境变量
-from dotenv import load_dotenv
+"""阿里云 OSS 上传签名 URL 接口"""
 
-load_dotenv()
+from datetime import timedelta
+
+import alibabacloud_oss_v2 as oss
+from fastapi import APIRouter, Depends, Query
+
+from app.core.config import Settings
+from app.core.dependencies import get_settings
+
+
 router = APIRouter()
 
-# 从环境变量中加载凭证信息，用于身份验证
-credentials_provider = oss.credentials.EnvironmentVariableCredentialsProvider()
+# Content-Type 映射表
+_CONTENT_TYPE_MAP = {
+    "jpg": "image/jpeg",
+    "jpeg": "image/jpeg",
+    "png": "image/png",
+    "gif": "image/gif",
+    "webp": "image/webp",
+}
 
-# 加载SDK的默认配置，并设置凭证提供者
-cfg = oss.config.load_default()
-cfg.credentials_provider = credentials_provider
 
-# 方式一：只填写Region（推荐）
-# 必须指定Region ID，SDK会根据Region自动构造HTTPS访问域名
-cfg.region = 'cn-beijing'
+def _get_oss_client(settings: Settings) -> oss.Client:
+    """根据配置创建 OSS 客户端。
 
-# 使用配置好的信息创建OSS客户端
-client = oss.Client(cfg)
+    每次调用都重新创建以确保使用最新的凭证。
+    """
+    # 设置临时环境变量供 SDK 读取
+    import os
+    os.environ["OSS_ACCESS_KEY_ID"] = settings.oss_access_key_id
+    os.environ["OSS_ACCESS_KEY_SECRET"] = settings.oss_access_key_secret
 
-# OSS 域名配置
-OSS_ENDPOINT = os.getenv("OSS_ENDPOINT", "oss-cn-beijing.aliyuncs.com")
-OSS_BUCKET = os.getenv("OSS_BUCKET")
+    credentials_provider = (
+        oss.credentials.EnvironmentVariableCredentialsProvider()
+    )
+    cfg = oss.config.load_default()
+    cfg.credentials_provider = credentials_provider
+    cfg.region = settings.oss_region
+
+    return oss.Client(cfg)
 
 
 @router.get("/oss/presign")
-def chat_endpoint(filename: str):
-    # 根据文件扩展名判断 Content-Type
-    content_type_map = {
-        "jpg": "image/jpeg",
-        "jpeg": "image/jpeg",
-        "png": "image/png",
-        "gif": "image/gif",
-        "webp": "image/webp",
-    }
+def generate_presigned_url(
+    filename: str = Query(..., description="上传文件名（含扩展名）"),
+    settings: Settings = Depends(get_settings),
+):
+    """生成 OSS 预签名上传 URL。
+
+    Returns:
+        uploadUrl: 预签名上传 URL（有效期 1 小时）
+        contentType: 文件 MIME 类型
+        accessUrl: 上传后的公开访问 URL
+    """
+    # 根据扩展名推断 Content-Type
     ext = filename.split(".")[-1].lower() if "." in filename else "jpg"
-    content_type = content_type_map.get(ext, "application/octet-stream")
+    content_type = _CONTENT_TYPE_MAP.get(ext, "application/octet-stream")
 
-    pre_result = client.presign(oss.PutObjectRequest(
-        bucket=OSS_BUCKET,
-        key=filename,
-        content_type=content_type,
-    ), expires=timedelta(seconds=3600))
+    client = _get_oss_client(settings)
+    pre_result = client.presign(
+        oss.PutObjectRequest(
+            bucket=settings.oss_bucket,
+            key=filename,
+            content_type=content_type,
+        ),
+        expires=timedelta(seconds=3600),
+    )
 
-    # 返回上传 URL 和可访问的图片路径
     return {
         "uploadUrl": pre_result.url.strip('"'),
         "contentType": content_type,
-        "accessUrl": f"https://{OSS_BUCKET}.{OSS_ENDPOINT}/{filename}"
+        "accessUrl": (
+            f"https://{settings.oss_bucket}.{settings.oss_endpoint}/{filename}"
+        ),
     }

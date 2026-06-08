@@ -13,7 +13,14 @@
       "Bash(python -c ' *)",
       "Bash(python test_rag.py)",
       "Bash(uv remove *)",
-      "Bash(python -c \"from dashscope import TextReRank; print\\('TextReRank OK'\\); resp = TextReRank.call\\(model='gte-rerank', query='测试', documents=['文档1', '文档2'], top_n=1\\); print\\(f'status={resp.status_code}'\\); print\\(f'message={resp.message}'\\)\")"
+      "Bash(python -c \"from dashscope import TextReRank; print\\('TextReRank OK'\\); resp = TextReRank.call\\(model='gte-rerank', query='测试', documents=['文档1', '文档2'], top_n=1\\); print\\(f'status={resp.status_code}'\\); print\\(f'message={resp.message}'\\)\")",
+      "Bash(.venv/Scripts/python -c \"from app.core.config import get_settings; s = get_settings\\(\\); print\\(f'Settings OK: llm={s.llm_model}, embedding={s.embedding_model}'\\)\")",
+      "Bash(.venv/Scripts/python -c \"from app.common.rag_manager import RAGManager; print\\('RAGManager import OK'\\)\")",
+      "Bash(.venv/Scripts/python -c \"from app.agents.demo import PetAgentService; print\\('PetAgentService import OK'\\)\")",
+      "Bash(.venv/Scripts/python -c ' *)",
+      "Bash(.venv/Scripts/python -c \"from langchain_tavily import TavilySearch; help\\(TavilySearch.__init__\\)\")",
+      "Bash(timeout 20 .venv/Scripts/python -c ' *)",
+      "Bash(uv sync *)"
     ]
   }
 }
