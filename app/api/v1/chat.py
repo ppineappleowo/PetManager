@@ -4,10 +4,15 @@ from fastapi import APIRouter, Depends, Query
 from fastapi.responses import StreamingResponse
 
 from app.models.schemas import ChatRequest, RAGAddRequest
-from app.core.dependencies import get_pet_agent_service
+from app.core.dependencies import get_pet_agent_service, get_current_user
 
 
 router = APIRouter()
+
+
+def _uid(user: dict) -> str:
+    """从 current_user 提取 user_id 字符串。"""
+    return str(user["id"])
 
 
 # ==================== 对话接口 ====================
@@ -16,6 +21,7 @@ router = APIRouter()
 async def chat_endpoint(
     request: ChatRequest,
     pet_service=Depends(get_pet_agent_service),
+    current_user=Depends(get_current_user),
 ):
     """流式对话 —— Server-Sent Events (SSE) 格式"""
     return StreamingResponse(
@@ -23,6 +29,7 @@ async def chat_endpoint(
             prompt=request.message,
             image=request.image_url,
             thread_id=request.thread_id,
+            user_id=_uid(current_user),
         ),
         media_type="text/event-stream",
     )
@@ -32,9 +39,10 @@ async def chat_endpoint(
 async def get_chat_messages(
     thread_id: str = Query(..., description="会话 ID"),
     pet_service=Depends(get_pet_agent_service),
+    current_user=Depends(get_current_user),
 ):
     """获取会话历史消息"""
-    messages = pet_service.get_messages(thread_id)
+    messages = pet_service.get_messages(thread_id, user_id=_uid(current_user))
     return {"messages": messages}
 
 
@@ -42,18 +50,20 @@ async def get_chat_messages(
 async def clear_chat_messages(
     thread_id: str = Query(..., description="会话 ID"),
     pet_service=Depends(get_pet_agent_service),
+    current_user=Depends(get_current_user),
 ):
     """清空会话历史"""
-    pet_service.clear_messages(thread_id)
+    pet_service.clear_messages(thread_id, user_id=_uid(current_user))
     return {"success": True}
 
 
 @router.get("/chat/threads")
 async def get_thread_list(
     pet_service=Depends(get_pet_agent_service),
+    current_user=Depends(get_current_user),
 ):
     """获取所有会话列表"""
-    threads = pet_service.list_threads()
+    threads = pet_service.list_threads(user_id=_uid(current_user))
     return {"threads": threads}
 
 

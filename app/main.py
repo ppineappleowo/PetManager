@@ -22,9 +22,10 @@ from fastapi.responses import FileResponse, JSONResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
-from app.api.v1 import chat, oss  # noqa: E402
+from app.api.v1 import chat, oss, auth  # noqa: E402
 from app.common.logger import setup_logging, logger  # noqa: E402
 from app.common.rag_manager import RAGManager  # noqa: E402
+from app.common.user_manager import UserManager  # noqa: E402
 from app.agents.demo import PetAgentService  # noqa: E402
 from app.core.config import get_settings, reset_settings  # noqa: E402
 # fmt: on
@@ -68,14 +69,18 @@ async def lifespan(app: FastAPI):
         rerank_model=settings.rerank_model,
     )
 
-    # 4. 创建 Agent 服务（含知识库加载）
+    # 4. 创建用户管理器
+    user_manager = UserManager(db_path=settings.users_db_path)
+
+    # 5. 创建 Agent 服务（含知识库加载）
     pet_agent_service = PetAgentService(
         settings=settings,
         rag_manager=rag_manager,
     )
 
-    # 5. 挂载到 app.state 供路由层依赖注入
+    # 6. 挂载到 app.state 供路由层依赖注入
     app.state.settings = settings
+    app.state.user_manager = user_manager
     app.state.pet_agent_service = pet_agent_service
 
     logger.info("AI 宠物管家启动完成！")
@@ -89,6 +94,10 @@ async def lifespan(app: FastAPI):
         pet_agent_service.close()
     except Exception as e:
         logger.warning(f"关闭 PetAgentService 时出错: {e}")
+    try:
+        user_manager.close()
+    except Exception as e:
+        logger.warning(f"关闭 UserManager 时出错: {e}")
     reset_settings()
     logger.info("AI 宠物管家已关闭")
 
@@ -131,6 +140,7 @@ app.add_middleware(
 )
 
 # ── 挂载 API 路由 ──
+app.include_router(auth.router, prefix="/api/v1", tags=["认证"])
 app.include_router(chat.router, prefix="/api/v1", tags=["对话"])
 app.include_router(oss.router, prefix="/api/v1", tags=["申请上传签名url"])
 

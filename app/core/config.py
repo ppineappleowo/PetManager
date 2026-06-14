@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     oss_access_key_id: str = ""
     oss_access_key_secret: str = ""
 
+    # ==================== JWT 认证 ====================
+    jwt_secret_key: str = "aIdemo-jwt-secret-change-in-production"
+    jwt_algorithm: str = "HS256"
+    jwt_expire_hours: int = 24
+
     # ==================== 服务器 ====================
     server_host: str = "127.0.0.1"
     server_port: int = 8001
@@ -103,6 +108,10 @@ class Settings(BaseSettings):
     @property
     def db_full_path(self) -> str:
         return str(self.resources_dir / "pet.db")
+
+    @property
+    def users_db_path(self) -> str:
+        return str(self.resources_dir / "users.db")
 
 
 # ==================== 单例工厂 ====================

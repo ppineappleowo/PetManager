@@ -234,7 +234,7 @@ class PetAgentService:
                 n=settings.rag_query_expand_n,
             )
 
-            # Step 1: 多查询并搜 RAG（粗排，不做精排）
+            # Step 1: 多查询并搜 RAG（粗排）
             all_candidates: list[dict] = []
             seen_fingerprint: set[str] = set()
 
@@ -391,7 +391,7 @@ class PetAgentService:
     # ==================== 流式对话 ====================
 
     async def consult(
-        self, prompt: str, image: str, thread_id: str
+        self, prompt: str, image: str, thread_id: str, user_id: str
     ) -> AsyncGenerator[str, None]:
         """调用 Agent 进行宠物养护咨询（流式输出）。
 
@@ -399,12 +399,14 @@ class PetAgentService:
             prompt: 用户输入文本。
             image: 图片 URL（可为空字符串表示纯文本对话）。
             thread_id: 会话 ID，用于多轮对话上下文关联。
-
+            user_id: 用户 ID，用于多租户隔离。
         Yields:
             流式输出的文本块。
         """
+        checkpoint_ns = f"user:{user_id}"
         logger.info(
-            f"[用户咨询]: {prompt}, image: {image}, thread_id: {thread_id}"
+            f"[用户咨询]: {prompt}, image: {image}, "
+            f"thread_id: {thread_id}, user_id: {user_id}"
         )
         try:
             if not image or image.strip() == "":
@@ -417,7 +419,7 @@ class PetAgentService:
 
             async for chunk, _metadata in self.agent.astream(
                 {"messages": [message]},
-                {"configurable": {"thread_id": thread_id}},
+                {"configurable": {"thread_id": thread_id, "checkpoint_ns": checkpoint_ns}},
                 stream_mode="messages",
             ):
                 if isinstance(chunk, AIMessageChunk) and chunk.content:
@@ -429,17 +431,22 @@ class PetAgentService:
 
     # ==================== 会话管理 ====================
 
-    def list_threads(self) -> list[dict]:
-        """获取所有会话列表，包含标题和消息数量。
+    def list_threads(self, user_id: str) -> list[dict]:
+        """获取指定用户的会话列表，包含标题和消息数量。
 
+        Args:
+            user_id: 用户 ID，用于多租户隔离。
         Returns:
             [{"thread_id": ..., "title": ..., "message_count": ...}, ...]
         """
+        checkpoint_ns = f"user:{user_id}"
         cursor = self.connection.cursor()
         try:
             cursor.execute(
                 "SELECT DISTINCT thread_id FROM checkpoints "
-                "ORDER BY thread_id DESC"
+                "WHERE checkpoint_ns = ? "
+                "ORDER BY thread_id DESC",
+                (checkpoint_ns,),
             )
             rows = cursor.fetchall()
         except Exception:
@@ -449,7 +456,7 @@ class PetAgentService:
         for row in rows:
             thread_id = row[0]
             title = "新会话"
-            messages = self.get_messages(thread_id)
+            messages = self.get_messages(thread_id, user_id)
             for m in messages:
                 if m["role"] == "user":
                     content = m["content"]
@@ -471,28 +478,45 @@ class PetAgentService:
 
         return threads
 
-    def clear_messages(self, thread_id: str):
-        """清空指定会话的所有消息。
+    def clear_messages(self, thread_id: str, user_id: str):
+        """清空指定用户指定会话的所有消息。
+
+        直接执行 SQL 以确保同时过滤 thread_id 和 checkpoint_ns，
+        避免 SqliteSaver.delete_thread() 仅按 thread_id 删除的局限。
 
         Args:
             thread_id: 会话 ID。
+            user_id: 用户 ID，用于多租户隔离。
         """
-        logger.info(f"清空历史消息，thread_id: {thread_id}")
-        self.checkpointer.delete_thread(thread_id)
+        checkpoint_ns = f"user:{user_id}"
+        logger.info(
+            f"清空历史消息，thread_id: {thread_id}, user_id: {user_id}"
+        )
+        self.connection.execute(
+            "DELETE FROM checkpoints WHERE thread_id = ? AND checkpoint_ns = ?",
+            (thread_id, checkpoint_ns),
+        )
+        self.connection.execute(
+            "DELETE FROM writes WHERE thread_id = ? AND checkpoint_ns = ?",
+            (thread_id, checkpoint_ns),
+        )
+        self.connection.commit()
 
-    def get_messages(self, thread_id: str) -> list[dict[str, str]]:
-        """获取指定会话的历史消息。
+    def get_messages(self, thread_id: str, user_id: str) -> list[dict[str, str]]:
+        """获取指定用户指定会话的历史消息。
 
         Args:
             thread_id: 会话 ID。
+            user_id: 用户 ID，用于多租户隔离。
 
         Returns:
             [{"role": "user"|"assistant", "content": ..., "image_url": ...?}, ...]
         """
-        logger.info(f"获取历史消息，thread_id: {thread_id}")
+        checkpoint_ns = f"user:{user_id}"
+        logger.info(f"获取历史消息，thread_id: {thread_id}, user_id: {user_id}")
 
         checkpoint = self.checkpointer.get(
-            {"configurable": {"thread_id": thread_id}}
+            {"configurable": {"thread_id": thread_id, "checkpoint_ns": checkpoint_ns}}
         )
         if not checkpoint:
             return []
