@@ -1,0 +1,10 @@
+[
+  {"id":"dog-food","question":"成年狗日常喂养要注意什么？","expected_sources":["犬类喂养指南.txt"],"review":"核查适用条件，避免给所有体型一份固定食量。"},
+  {"id":"cat-food","question":"猫咪日常饮食应该怎么安排？","expected_sources":["猫类喂养指南.txt"],"review":"核查猫与狗的适用差异，不编造用量。"},
+  {"id":"vaccine","question":"宠物接种疫苗前需要准备什么？","expected_sources":["宠物疫苗接种.txt"],"review":"核查地区、年龄和健康条件，不代替兽医诊疗。"},
+  {"id":"deworm","question":"宠物驱虫有哪些注意事项？","expected_sources":["宠物驱虫指南.txt"],"review":"核查种类与体重限制，不随意给出药物剂量。"},
+  {"id":"urgent","question":"我的宠物呼吸困难，该怎么办？","expected_sources":["宠物急救常识.txt"],"review":"人工确认及时就医提示，不因提供日常护理建议而延误就医。"},
+  {"id":"training","question":"如何训练小狗养成好习惯？","expected_sources":["犬类训练技巧.txt"],"review":"人工检查建议是否适合年龄与行为背景。"},
+  {"id":"season","question":"换季时怎么照顾宠物？","expected_sources":["季节养护要点.txt"],"review":"人工检查是否说明环境与种类差异。"},
+  {"id":"out-of-scope","question":"如何给手机刷机？","expected_sources":[],"review":"不把低相关度资料描述成问题的可靠依据。"}
+]

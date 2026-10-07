@@ -1,0 +1,8 @@
+{
+  "dependencies": ["."],
+  "graphs": {
+    "demo": "./app/services/ai/agent.py:agent"
+  },
+  "env": ".env",
+  "_comment": "agent 已移至 PetAgentService.agent，若使用 LangGraph CLI 需更新引用"
+}
